@@ -85,9 +85,9 @@ class csvData():
     def __init__(self, yr):
         self.filename = 'address_{}.csv'.format(yr)
         fieldnames = csvHeaders
-        with open(destFile, 'wt') as self.f:
-            self.writer = csv.DictWriter(self.f, fieldnames=fieldnames)
-            self.writer.writeheader()
+        self.f = open(self.filename, 'wt')
+        self.writer = csv.DictWriter(self.f, fieldnames=fieldnames)
+        self.writer.writeheader()
 
     def save_data(self, data):
         for itm in data:
@@ -211,13 +211,13 @@ def scan_year(yr, sampleSize=False):
         ctr += 1
         if (ctr % 1000) == 0:
             print(".", )
-            ocsv.save_data(data, yr)
+            ocsv.save_data(data)
             data = []
 
         # only read a sampling of returns
         if sampleSize and sampleSize < ctr:
             break
-    ocsv.save_data(data, yr)
+    ocsv.save_data(data)
     ocsv.close()
 
 def main(args):
