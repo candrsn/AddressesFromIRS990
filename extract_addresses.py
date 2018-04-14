@@ -81,22 +81,21 @@ csvHeaders = [
     'AddrType','EIN','YearFormation','NumEmployees','ReturnFile'
     ]
 
-def save_data(data, yr):
-    #fieldnames = data[0].keys()
-    fieldnames = csvHeaders
+class csvData():
+    def __init__(self, yr):
+        self.filename = 'address_{}.csv'.format(yr)
+        fieldnames = csvHeaders
+        with open(destFile, 'wt') as self.f:
+            self.writer = csv.DictWriter(self.f, fieldnames=fieldnames)
+            self.writer.writeheader()
 
-    destFile = 'address_{}.csv'.format(yr)
-    if os.path.exists(destFile):
-        needHdr = False
-    else:
-        needHdr = True
-    with open(destFile, 'at') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-
-        if needHdr:
-            writer.writeheader()
+    def save_data(self, data):
         for itm in data:
-            writer.writerow(itm)
+            self.writer.writerow(itm)
+
+    def close(self):
+        self.writer.close()
+        self.f.close()
 
 def scanFile(irsFile, unknownTags=[]):
     try:
@@ -204,6 +203,7 @@ def scan_year(yr, sampleSize=False):
     ctr = 0
     unknownTags = []
     data = []
+    ocsv = csvData(yr)
 
     for irsReturn in files:
         newData, unknownTags = scanFile(irsReturn, unknownTags)
@@ -211,13 +211,14 @@ def scan_year(yr, sampleSize=False):
         ctr += 1
         if (ctr % 1000) == 0:
             print(".", )
-            save_data(data, yr)
+            ocsv.save_data(data, yr)
             data = []
 
         # only read a sampling of returns
         if sampleSize and sampleSize < ctr:
             break
-    save_data(data, yr)
+    ocsv.save_data(data, yr)
+    ocsv.close()
 
 def main(args):
     if len(args) == 2:
