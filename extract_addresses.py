@@ -24,6 +24,7 @@ addressContentTags = [
 
 businessContentTags = [
     "Filer/efile:BusinessName",
+    "Filer/efile:Name",
     "BusinessNameLine1/..",
     "BusinessNameLine1Txt/.."
     ]
