@@ -65,19 +65,24 @@ stateTags = [
     "{http://www.irs.gov/efile}State",
     "{http://www.irs.gov/efile}StateAbbreviationCd",
     "{http://www.irs.gov/efile}ProvinceOrState",
-    "{http://www.irs.gov/efile}ProvinceOrStateNm",]
+    "{http://www.irs.gov/efile}ProvinceOrStateNm"
+    ]
 
 countryTags = [
     "{http://www.irs.gov/efile}CountryCd",
     "{http://www.irs.gov/efile}Country"
-]
+    ]
+
+csvHeaders = [
+    'BusinessName', 'TaxYr',
+    'Addr1','Addr2','Addr3', 'Locality',
+    'StateorProvince', 'Country', 'PostalCode',
+    'AddrType','EIN','YearFormation','NumEmployees','ReturnFile'
+    ]
 
 def save_data(data, yr):
     #fieldnames = data[0].keys()
-    fieldnames = ['BusinessName', 'TaxYr',
-            'Addr1','Addr2','Addr3', 'Locality',
-            'StateorProvince', 'Country', 'PostalCode',
-            'EIN','AddrType']
+    fieldnames = csvHeaders
 
     destFile = 'address_{}.csv'.format(yr)
     if os.path.exists(destFile):
@@ -137,13 +142,29 @@ def scanFile(irsFile, unknownTags=[]):
         if not taxYr == '':
             break
 
+    yrFormation = ''
+    for srchTag in ['YearFormation']:
+        for contentNode in root.findall('.//efile:' + srchTag,  ns):
+            yrFormation = contentNode.text
+        # stop looking once we find a valid name
+        if not yrFormation == '':
+            break
+
+    numEmployees = ''
+    for srchTag in ['NumberOfEmployees']:
+        for contentNode in root.findall('.//efile:' + srchTag,  ns):
+            numEmployees = contentNode.text
+        # stop looking once we find a valid name
+        if not numEmployees == '':
+            break
+
     for srchTag in addressContentTags:
         # return for nodes that contain an address component
         for addressNode in root.findall('.//efile:' + srchTag + '/..',  ns):
             #pe = parentMap[addressNode]
             context =  parentMap[addressNode].tag.replace('{http://www.irs.gov/efile}', '') + "." +  addressNode.tag.replace('{http://www.irs.gov/efile}', '')
             item = {"EIN":ein, "BusinessName":businessName, "TaxYr": taxYr,
-                'AddrType': context}
+                    'AddrType': context, 'NumEmployees': numEmployees, 'YearFormation': yrFormation, 'ReturnFile': irsFile }
             for addressComponent in addressNode:
                 if not addressComponent.tag in knownTags:
                     if not addressComponent.tag in unknownTags:
@@ -198,9 +219,13 @@ def scan_year(yr, sampleSize=False):
     save_data(data, yr)
 
 def main(args):
+    if len(args) == 2:
+        sampleSize = int(args[1])
+    else:
+        sampleSize = False
     #scanFile('data/2017/201700069349100100_public.xml')
     if len(args) > 0:
-        scan_year(args[0], 1200)
+        scan_year(args[0], sampleSize)
     else:
         scan_year('2017')
 
