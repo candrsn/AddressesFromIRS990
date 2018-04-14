@@ -117,8 +117,8 @@ def scanFile(irsFile, unknownTags=[]):
             for nameComponent in addressNode:
                 businessName.append(nameComponent.text)
         # stop looking once we find a valid name
-        if not len(lot businessName) == 0:
-            businessName =  '// '.join(businessName)
+        if len(businessName) > 0:
+            businessName =  ' // '.join(businessName)
             break
 
     ein = ''
@@ -177,7 +177,7 @@ def scanFile(irsFile, unknownTags=[]):
 
     return data, unknownTags
 
-def scan_year(yr):
+def scan_year(yr, sampleSize=False):
     files = glob.glob('data/' + yr + '/*xml')
     ctr = 0
     unknownTags = []
@@ -192,10 +192,15 @@ def scan_year(yr):
             save_data(data, yr)
             data = []
 
+        # only read a sampling of returns
+        if sampleSize and sampleSize < ctr:
+            break
+    save_data(data, yr)
+
 def main(args):
     #scanFile('data/2017/201700069349100100_public.xml')
     if len(args) > 0:
-        scan_year(args[0])
+        scan_year(args[0], 1200)
     else:
         scan_year('2017')
 
