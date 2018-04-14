@@ -143,7 +143,7 @@ def scanFile(irsFile, unknownTags=[]):
             break
 
     yrFormation = ''
-    for srchTag in ['YearFormation']:
+    for srchTag in ['YearFormation','FormationYr']:
         for contentNode in root.findall('.//efile:' + srchTag,  ns):
             yrFormation = contentNode.text
         # stop looking once we find a valid name
@@ -151,7 +151,7 @@ def scanFile(irsFile, unknownTags=[]):
             break
 
     numEmployees = ''
-    for srchTag in ['NumberOfEmployees']:
+    for srchTag in ['TotalNbrEmployees','NumberOfEmployees','TotalEmployeeCnt','EmployeeCnt']:
         for contentNode in root.findall('.//efile:' + srchTag,  ns):
             numEmployees = contentNode.text
         # stop looking once we find a valid name
@@ -223,7 +223,7 @@ def main(args):
         sampleSize = int(args[1])
     else:
         sampleSize = False
-    #scanFile('data/2017/201700069349100100_public.xml')
+
     if len(args) > 0:
         scan_year(args[0], sampleSize)
     else:
