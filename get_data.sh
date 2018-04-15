@@ -47,7 +47,7 @@ get_years_listings() {
 
 refresh_status() {
     yr="$1"
-    find data/${yr} -name "*xml" | sed -e 's/data\/.*\///' | sort > status_${yr}.lst
+    find data/${yr} -name "*xml" | sed -e 's/data\/.*\/..\///' | sort > status_${yr}.lst
     
     echo "PRAGMA SYNCHRONOUS=off;
     CREATE TABLE IF NOT EXISTS retrieve_log (path TEXT PRIMARY KEY);
@@ -134,14 +134,21 @@ build_dl_script() {
   echo "
 .mode column
 .output  'tmp/retrieve_aws.sh'
-SELECT 'mkdir -p data/${yr}';
+SELECT 'mkdir -p data/${yr}/' || s.seg || ';'
+    FROM  (SELECT DISTINCT
+        substr(object_id,5,2) as seg
+      FROM filings f
+      WHERE object_id like '${yr}%.xml' and
+        NOT EXISTS (SELECT 1 FROM retrieve_log r WHERE r.path = f.object_id) ) as s
+  ;
+
 SELECT 'cd data/${yr}';
 SELECT 'idx=0';
-SELECT 'if [ ! -s '||s.url||' ]; then idx=\$((idx + 1)); (curl -O '||s.fullurl || ' &); fi'
+SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx + 1)); (cd ' || substr(s.url,5,2) || '; curl -O ' || s.fullurl || ' &); fi'
     FROM (SELECT 'https://s3.amazonaws.com/irs-form-990/'||object_id as fullurl, 
         object_id as url
       FROM filings f
-      WHERE object_id like '${yr}%' and
+      WHERE object_id like '${yr}%.xml' and
         NOT EXISTS (SELECT 1 FROM retrieve_log r WHERE r.path = f.object_id) ) as s
     ORDER BY url
     ;
