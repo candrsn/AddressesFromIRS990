@@ -4,7 +4,7 @@ import sys
 import os
 import glob
 import xml.etree.ElementTree as ET
-import csv
+import unicodecsv as csv
 
 addressTags = [
     "AddressUS",
@@ -94,7 +94,6 @@ class csvData():
             self.writer.writerow(itm)
 
     def close(self):
-        self.writer.close()
         self.f.close()
 
 def scanFile(irsFile, unknownTags=[]):
