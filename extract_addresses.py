@@ -199,7 +199,7 @@ def scanFile(irsFile, unknownTags=[]):
 
 def scan_year(yr, sampleSize=False):
     # materialize the file list to keep from re-scanning the dirs
-    files = list(glob.glob('data/' + yr + '/*/*xml'))
+    files = list(glob.glob('tmpdata/' + yr + '/*/*xml'))
     ctr = 0
     unknownTags = []
     data = []

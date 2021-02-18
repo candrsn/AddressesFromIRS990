@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # call this as
-#  find data/2017 -exec bash ./file_check.sh {} \;
+#  find tmpdata/2017 -exec bash ./file_check.sh {} \;
 
 fil="$1"
 
