@@ -2,9 +2,12 @@
 
 
 ##  bash -x get_data.sh 2020 | tee run2020.log
+set -e
 
-#eval "$(conda shell.bash hook)"
-#conda activate gis
+if [ "$CONDA_SHLVL" == "0" -o -z "$CONDA_SHLVL" ]; then
+    eval "$(conda shell.bash hook)"
+    conda activate gis
+fi
 
 if [ ! "$0" == "bash" -a ! "$0" == "-bash" ]; then
   # turn onn exit on error if it is set
@@ -16,12 +19,37 @@ fi
 set +e
 
 get_irs_index() {
-	curl -O https://s3.amazonaws.com/irs-form-990/index_${1}.csv
+    curl -O https://s3.amazonaws.com/irs-form-990/index_${1}.csv
     remove_xml index_${1}.csv
 }
 
+archive_indexes() {
+    dt=`date -r index_2021.csv +%Y%m%d`
+    dest="index_${dt}.zip"
+    set -e
+    if [ ! -s bk/$dest ]; then
+        zip $dest index*json index*csv
+        mv $dest bk
+        rm index*csv index*json
+    fi
+}
+
+archive_listings() {
+    dt=`date -r aws_2021.lst.gz "+%Y%m%d"`
+    dest="aws_listing_${dt}.zip"
+    set -e
+    if [ ! -s bk/$dest ]; then
+        zip $dest aws*gz
+        mv $dest bk
+        rm aws*gz
+    fi
+}
+
 get_irs_static_files() {
+    return
+
     pushd index
+    
     for yr in `get_years`; do
         if [ ! -s index_${yr}.csv ]; then
             get_irs_index $yr
@@ -129,7 +157,20 @@ get_migration() {
 	    remove_html "$src"
         fi
     done
+}
 
+list_prefix() {
+    aws s3 ls s3://irs-form-990/${1} --recursive | awk -e '/./ { print $4 };'
+}
+
+get_aws_indexes() {
+    pushd index
+    archive_indexes | :
+    
+    for sfx in `list_prefix index_`; do
+        aws s3 cp s3://irs-form-990/${sfx} ${sfx}
+    done
+   popd
 }
 
 get_aws_yr_list() {
@@ -139,11 +180,9 @@ get_aws_yr_list() {
     
     if [ ! -s $destFile ]; then
         echo "get s3 listing for $ayr"
-
         aws s3 ls s3://irs-form-990/${ayr} --recursive |  gzip -c - > $destFile
     fi
     popd
-
 }
 
 get_years_listings() {
@@ -152,9 +191,23 @@ get_years_listings() {
         force_reload=0
     fi
 
+    pushd listing
+    archive_listings
+    popd
+
     for i in `get_years`; do
-        get_aws_yr_list $i $force_reload
+        get_aws_yr_list $i $force_reload &
+        
+        if [ `jobs -p | grep -c '.'` -gt 7 ]; then
+            wait -n
+        fi
     done
+    
+    echo "waiting for aws index scans to complete"
+    ## wait for all jobs started above to end
+    wait
+    
+    get_aws_indexes
 }
 
 setup_retrieve_log() {
@@ -221,7 +274,7 @@ refresh_status() {
  -- we need the DISTINCT clause here because some returns are encoded in multiple years
  INSERT INTO retrieve_log (path)
      SELECT DISTINCT object_id from import_tmp p
-         WHERE p.object_id like '.xml' and
+         WHERE p.object_id like '%.xml' and
          NOT EXISTS (SELECT 1 FROM retrieve_log r WHERE r.path = p.object_id);
 
  DROP TABLE IF EXISTS import_tmp;
@@ -361,9 +414,12 @@ SELECT 'zip -d irs_f990_${yr}.zip ' ||  '${yr}/' || substr(s.object_id,5,2) || '
 
 
 SELECT 'popd';
-  " | tee build_cln_scripts.sql | sqlite3 data/listing.db
+  " | tee build_cln_script_${yr}.sql | sqlite3 data/listing.db
 
+    echo "after downloading the files run this to put the files into a ZIP archive and then remove the original downloaded files
+    bash -x tmp/clean_${yr}_files.sh
 
+    " >&2
 }
 
 build_dl_script() {
@@ -390,10 +446,10 @@ SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx 
         NOT EXISTS (SELECT 1 FROM retrieve_log r WHERE r.path = f.object_id) ) as s
     ORDER BY url;
 
-  " | tee build_dl_scripts.sql | sqlite3 data/listing.db
+  " | tee build_dl_script_${yr}.sql | sqlite3 data/listing.db
 
 
-  ## inject a pid wait evert 150 lines in the file
+  ## inject a pid and a wait every 150 lines in the file
   (cat tmp/retrieve_aws.sh | awk '/./ { print $0; if ( (NR % 150) == 0 ) {
     print "# wait for all child processes to complete"
     print "wait" 
@@ -408,6 +464,10 @@ SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx 
   }
    }'
    ) > tmp/span_${yr}_dl.sh
+   
+   echo "to actually do the download.....
+   bash -x tmp/span_${yr}_dl.sh
+   " >&2
 }
 
 reload() {
@@ -448,8 +508,10 @@ main()  {
     fi
 
     export FORCERELOAD="1"
-    #load_files
-    #build_db
+    #get static and dynamic listings of returns
+    load_files
+ 
+    build_db
 
     for list_yr in $list_yrs; do
         build_dl_script ${list_yr}
@@ -459,6 +521,7 @@ main()  {
     echo "All Done"
 }
 
+# if called as a "source" then do not do anything
 if [ ! "$0" == "bash" -a ! "$0" == "-bash" ]; then
     main "$1"
     :
