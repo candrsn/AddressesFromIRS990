@@ -279,7 +279,7 @@ refresh_status() {
 
  DROP TABLE IF EXISTS import_tmp;
 
-       ") | tee refresh_status_${yr}.sql |  sqlite3 data/listing.db
+       ") | tee scripts/refresh_status_${yr}.sql |  sqlite3 data/listing.db
     done
     popd
 }
@@ -373,7 +373,7 @@ CREATE INDEX IF NOT EXISTS filings__object_id__ind on filings(object_id);
 
 DELETE FROM filings as fo 
     WHERE rowid < (SELECT max(rowid) FROM filings f WHERE f.object_id = fo.object_id)
-  ") | tee -a build_data.sql | sqlite3 data/listing.db
+  ") | tee -a scripts/build_data.sql | sqlite3 data/listing.db
 
   # merge in data from the aws S3 listing
   load_from_aws_listings
@@ -414,7 +414,7 @@ SELECT 'zip -d irs_f990_${yr}.zip ' ||  '${yr}/' || substr(s.object_id,5,2) || '
 
 
 SELECT 'popd';
-  " | tee build_cln_script_${yr}.sql | sqlite3 data/listing.db
+  " | tee scripts/build_cln_script_${yr}.sql | sqlite3 data/listing.db
 
     echo "after downloading the files run this to put the files into a ZIP archive and then remove the original downloaded files
     bash -x tmp/clean_${yr}_files.sh
@@ -446,7 +446,7 @@ SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx 
         NOT EXISTS (SELECT 1 FROM retrieve_log r WHERE r.path = f.object_id) ) as s
     ORDER BY url;
 
-  " | tee build_dl_script_${yr}.sql | sqlite3 data/listing.db
+  " | tee scripts/build_dl_script_${yr}.sql | sqlite3 data/listing.db
 
 
   ## inject a pid and a wait every 150 lines in the file

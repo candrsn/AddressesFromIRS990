@@ -52,7 +52,7 @@ clean_year() {
 
 merge_year() {
     
-    echo "mergeing segments for the year $yr"
+    echo "checking for data segments for the year $yr"
     pushd $WD
     
     yr="$1"
@@ -65,7 +65,8 @@ merge_year() {
     done
     
     if [ -n "$s" ]; then
-        # do not attempt to merge if there are not candidates
+        # do not attempt to merge if there are no candidates
+        echo "merging the detected segments for the year ${yr}"
         
         dest="irs_f990_${yr}.zip"
         if [ -s "$dest" ]; then
@@ -86,9 +87,12 @@ merge_year() {
     flgs="-i"
     flgs=""
     
-    echo "removing the constituent files that were merged"
+    echo "removing the constituent zipfiles that were merged"
     rm $flgs irs_f990_${yr}_*.zip
-    
+
+    echo "removing the constituent xmlfiles that were merged"
+    rm -rf ${yr}/*
+
     popd
     
 }
