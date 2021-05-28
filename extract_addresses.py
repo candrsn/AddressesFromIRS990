@@ -1,10 +1,23 @@
 ### extract_address.py
 
+from io import StringIO
 import sys
 import os
+import io
 import glob
 import xml.etree.ElementTree as ET
 import unicodecsv as csv
+import zipfile
+import logging
+import traceback
+import db_logging
+import sqlite3
+
+# set TMPDIR to be here unless it already is defined
+if "TMPDIR" not in os.environ:
+    os.environ["TMPDIR"] = os.path.realpath(__name_)
+
+TIMINGS = False
 
 addressTags = [
     "AddressUS",
@@ -82,12 +95,18 @@ csvHeaders = [
     ]
 
 class csvData():
-    def __init__(self, yr):
-        self.filename = 'address_{}.csv'.format(yr)
+    exists = False
+
+    def __init__(self, yr, refresh=False):
+        self.filename = 'build/address_{}.csv'.format(yr)
         fieldnames = csvHeaders
-        self.f = open(self.filename, 'wt')
-        self.writer = csv.DictWriter(self.f, fieldnames=fieldnames)
-        self.writer.writeheader()
+        if os.path.exists(self.filename) and refresh is False:
+            self.exists = True
+        else:
+            self.f = open(self.filename, 'wb')
+            self.writer = csv.DictWriter(self.f, fieldnames=fieldnames)
+            self.writer.writeheader()
+            self.exists = False
 
     def save_data(self, data):
         for itm in data:
@@ -96,21 +115,41 @@ class csvData():
     def close(self):
         self.f.close()
 
-def scanFile(irsFile, unknownTags=[]):
+def scanFile(irsFile, unknownTags=[], zf=None, data_logger=None):
+    if zf is None:
+        return [], unknownTags
+    else:
+        irsFile=zf.open(irsFile)
+
     try:
-        tree = ET.parse(irsFile)
-        root = tree.getroot()
+        #need to strip BOM marks if they exist
+
+        root = ET.fromstring(irsFile.read().decode('utf-8-sig'))
+
+        # only explicitly grab the root if we passively parse the XML doc
+        # tree = ET.parse(irsFile)
+        # root = tree.getroot()
     except:
-        print("failed to read {}".format(irsFile))
+        # log the errors immediately so we have them if thing truely crash later
+        if data_logger is not None:
+            f = io.StringIO()
+            traceback.print_exc(file=f)
+
+            # reset the file pointer to the top
+            f.seek(0)
+            data_logger.log_validity(irsFile.name, f.read())
+            
+        logging.warning("failed to read {}".format(irsFile.name))
         #return nothing as if the file was readable
         return [], unknownTags
 
-    parentMap = {c:p for p in tree.iter() for c in p}
+    parentMap = {c:p for p in root.iter() for c in p}
 
     knownTags = line1Tags + line2Tags + line3Tags + cityTags + stateTags + zipCodeTags + countryTags
     newUnknownTags = []
 
     data = []
+
 
     # searchNameSpace
     ns = {'efile':'http://www.irs.gov/efile'}
@@ -141,19 +180,21 @@ def scanFile(irsFile, unknownTags=[]):
         if not taxYr == '':
             break
 
+    # search for the company establishment year
     yrFormation = ''
     for srchTag in ['YearFormation','FormationYr']:
         for contentNode in root.findall('.//efile:' + srchTag,  ns):
             yrFormation = contentNode.text
-        # stop looking once we find a valid name
+        # stop looking once we find a valid valuee
         if not yrFormation == '':
             break
 
+    # search for the number of employees
     numEmployees = ''
     for srchTag in ['TotalNbrEmployees','NumberOfEmployees','TotalEmployeeCnt','EmployeeCnt']:
         for contentNode in root.findall('.//efile:' + srchTag,  ns):
             numEmployees = contentNode.text
-        # stop looking once we find a valid name
+        # stop looking once we find a valid value
         if not numEmployees == '':
             break
 
@@ -163,7 +204,11 @@ def scanFile(irsFile, unknownTags=[]):
             #pe = parentMap[addressNode]
             context =  parentMap[addressNode].tag.replace('{http://www.irs.gov/efile}', '') + "." +  addressNode.tag.replace('{http://www.irs.gov/efile}', '')
             item = {"EIN":ein, "BusinessName":businessName, "TaxYr": taxYr,
-                    'AddrType': context, 'NumEmployees': numEmployees, 'YearFormation': yrFormation, 'ReturnFile': irsFile }
+                    'AddrType': context, 'NumEmployees': numEmployees, 
+                    'YearFormation': yrFormation, 'ReturnFile': os.path.basename(irsFile.name),
+                    'PostalCode': None, 'StateorProvince': None, 'Country': None,
+                    'Locality': None, 'Addr1': None, 'Addr2': None, 'Addr3': None}
+
             for addressComponent in addressNode:
                 if not addressComponent.tag in knownTags:
                     if not addressComponent.tag in unknownTags:
@@ -185,52 +230,96 @@ def scanFile(irsFile, unknownTags=[]):
                         item["Addr2"] = addressComponent.text
                     elif addressComponent.tag in line3Tags:
                         item["Addr3"] = addressComponent.text
+            
+
+            ## the special value "RESTRICTED" is used to indicate redacted info
             if 'Addr1' in item and not item["Addr1"] == "RESTRICTED":
                 data.append(item)
             else:
                 if not 'Addr1' in item:
-                    print(addressComponent.tag, addressComponent.text)
-                    print(item)
+                    logging.info(addressComponent.tag, addressComponent.text)
+                    logging.info(item)
 
     if len(newUnknownTags) > 0:
-        print(newUnknownTags)
+        logging.info(newUnknownTags)
 
     return data, unknownTags
 
-def scan_year(yr, sampleSize=False):
+def scan_year(yr, dbname=':memory:', sampleSize=False, refresh=False):
+
+    ocsv = csvData(yr, refresh=refresh)
+    if ocsv.exists is True:
+        logging.info(f"skipping the build of a csv for year {yr}, as it already exists")
+        return
+
+    logging.info(f"importing tax year {yr}")
     # materialize the file list to keep from re-scanning the dirs
-    files = list(glob.glob('tmpdata/' + yr + '/*/*xml'))
+    archivefile = f"tmpdata/irs_f990_{yr}.zip"
+    try:
+        zf = zipfile.ZipFile(archivefile, "r")
+    except FileNotFoundError:
+        logging.warning(f"archive {archivefile} not found")
+        return
+
+    files = list([d for d in zf.namelist() if d.endswith(".xml")])
     ctr = 0
     unknownTags = []
     data = []
-    ocsv = csvData(yr)
+    # delete any existing DB
+    dblog = db_logging.DBLOG(dbname=f"data/my_{yr}.db", preserve=False)
 
     for irsReturn in files:
-        newData, unknownTags = scanFile(irsReturn, unknownTags)
+        (newData, unknownTags) = scanFile(irsReturn, unknownTags=unknownTags, zf=zf, data_logger=dblog)
         data += newData
         ctr += 1
-        if (ctr % 1000) == 0:
-            print(".", )
+        if (ctr % 10000) == 0:
+            logging.debug(".", )
             ocsv.save_data(data)
+            dblog.save_data(data)
             data = []
 
         # only read a sampling of returns
         if sampleSize and sampleSize < ctr:
             break
+
     ocsv.save_data(data)
+    dblog.save_data(data)
     ocsv.close()
+    dblog.close()
+
+def years():
+    yrs = []
+    iyr = 2008
+    while iyr < 2022:
+        yrs.append(iyr)
+        iyr += 1
+
+    return yrs
 
 def main(args):
-    if len(args) == 2:
-        sampleSize = int(args[1])
+
+    if "--refresh" in args:
+        refreshData = True
+    else:
+        refreshData = False
+
+    if "--sampleSize" in args:
+        sampleSize = int(args[args.index("--sampleSize") + 1])
     else:
         sampleSize = False
 
-    if len(args) > 0:
-        scan_year(args[0], sampleSize)
+    if "--taxyear" in args:
+        taxyrs = [args[args.index("--taxyear") + 1]]
     else:
-        scan_year('2017')
+        taxyrs = years()
 
+    for yr in taxyrs:
+        dbname = f"data/filing_addresses_${yr}.db"
+        starttm = time.time()
+        scan_year(yr, dbname=dbname, sampleSize=sampleSize, refresh=refreshData)
+        duration = time.time() - starttm
+        logging.info(f"Records for {yr} imported in {duration}")
 if __name__ == "__main__":
-    main(sys.argv[1:])
-    print("All Done")
+    logging.basicConfig(level=logging.INFO)
+    main(sys.argv)
+    logging.info("All Done")

@@ -1,7 +1,9 @@
 #!/bin.bash
-
 #import_addresses.sh
-DB=irs_addresses.db
+
+export TMPDIR="~/tmp"
+
+set -e
 
 setup() {
     echo "PRAGMA SYNCHRONOUS=off;
@@ -22,12 +24,27 @@ import_file() {
     " | sqlite3 $DB
 }
 
-rm $DB
-setup
+import_yr() {
+    yr="$1"
+    DB="data/irs_addresses_${yr}.db"
+    if [ -r "$DB" ]; then
+        rm $DB | :
+    fi
 
-import_file address_2010.csv
-import_file address_2012.csv
-import_file address_2015.csv
-import_file address_2017.csv
-import_file address_2018.csv
+    setup
 
+    import_file build/address_${yr}.csv
+
+    echo "
+CREATE INDEX irs_address__returnfile__ind on irs_address(returnfile);
+.mode tab
+.headers on
+.once odd_returns.tsv
+SELECT returnfile FROM irs_address WHERE returnfile IN (SELECT returnFile FROM irs_address i GROUP BY 1 HAVING count(*) > 10000);
+ " | sqlite3 $DB
+}
+
+for s in build/address_*.csv; do
+    j=`basename "$s" .csv | sed -e 's/.*address_//'`
+    import_yr $j
+done

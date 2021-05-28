@@ -422,9 +422,79 @@ SELECT 'popd';
     " >&2
 }
 
+accumulate_redownloads() {
+    yr="$1"
+
+  (
+  echo "CREATE TABLE IF NOT EXISTS redownload (url TEXT, key TEXT);
+  CREATE UNIQUE INDEX IF NOT EXISTS redownload__url__ind on redownload(url);"
+
+
+  if [ -s "data/my_${yr}.db" ]; then
+
+  echo "starting extract" >&2
+  echo "
+ATTACH DATABASE 'data/my_${yr}.db' as a;
+
+CREATE TEMP TABLE ierr_tmp as 
+    SELECT substr(xml_file,9) as key,
+        substr(xml_file,6,2) as seg,
+        xml_file
+      FROM a.import_errors;
+
+.mode column
+.headers off
+.output  'tmp/retrieve_aws.sh'
+SELECT 'mkdir -p tmpdata/${yr}/' || s.seg || ';'
+    FROM  (SELECT DISTINCT
+         seg
+      FROM ierr_tmp f
+      WHERE xml_file like '${yr}%.xml' ) as s;
+
+SELECT 'pushd tmpdata/${yr}';
+SELECT 'idx=0';
+SELECT 'if [ ! -s '|| s.seg || '/' || s.key|| ' ]; then idx=\$((idx + 1)); (cd ' || s.seg || '; curl -O ' || s.fullurl || ' &); fi'
+    FROM (SELECT 'https://s3.amazonaws.com/irs-form-990/' || key as fullurl, 
+        xml_file, key, seg
+      FROM ierr_tmp f
+      WHERE xml_file like '${yr}%.xml' ) as s
+    ORDER BY key;
+
+DETACH DATABASE a;
+  " 
+  fi  ) | tee scripts/build_redl_script_${yr}.sql | sqlite3 data/listing.db
+
+finalize_downloads
+
+}
+
+finalize_downloads() {
+  ## inject a pid and a wait every 150 lines in the file
+  (cat tmp/retrieve_aws.sh | awk '/./ { print $0; if ( (NR % 150) == 0 ) {
+    print "# wait for all child processes to complete"
+    print "wait" 
+    print "idx=0";
+  }
+  if ( (NR % 300) == 0 ) {
+    print "sp=`jobs | grep -c \"Run\"`";
+    print "if [ $sp -gt 0 ]; then";
+    print "    wait";
+    print "    sleep 1";
+    print "fi";
+  }
+   }'
+   ) > tmp/span_${yr}_dl.sh
+   
+   echo "to actually do the download.....
+   bash -x tmp/span_${yr}_dl.sh
+   " >&2
+
+}
+
 build_dl_script() {
   yr="$1"
 
+  accumulate_redownloads $yr
   echo "
 .mode column
 .headers off
@@ -448,22 +518,7 @@ SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx 
 
   " | tee scripts/build_dl_script_${yr}.sql | sqlite3 data/listing.db
 
-
-  ## inject a pid and a wait every 150 lines in the file
-  (cat tmp/retrieve_aws.sh | awk '/./ { print $0; if ( (NR % 150) == 0 ) {
-    print "# wait for all child processes to complete"
-    print "wait" 
-    print "idx=0";
-  }
-  if ( (NR % 300) == 0 ) {
-    print "sp=`jobs | grep -c \"Run\"`";
-    print "if [ $sp -gt 0 ]; then";
-    print "    wait";
-    print "    sleep 1";
-    print "fi";
-  }
-   }'
-   ) > tmp/span_${yr}_dl.sh
+   finalize_downloads
    
    echo "to actually do the download.....
    bash -x tmp/span_${yr}_dl.sh
