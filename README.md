@@ -4,3 +4,11 @@
   * Extract and normalize address data from the forms
 
 
+### monthly flow
+   bash -x get_data.sh
+   # which builds several content download scripts into tmp
+
+   bash -x retrieve_aws.sh
+   
+
+

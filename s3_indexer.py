@@ -230,7 +230,7 @@ def parse_args(args):
 
 def main(args=[]):
 
-    if len(args) < 2:
+    if len(args) < -2:
         usage()
     else:
 
@@ -264,6 +264,7 @@ def usage():
 
 def cli():
     args = sys.argv
+    main(args)
 
 
 if __name__ == "__main__":

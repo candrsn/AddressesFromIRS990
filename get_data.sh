@@ -19,7 +19,8 @@ fi
 set +e
 
 get_irs_index() {
-    curl -O https://s3.amazonaws.com/irs-form-990/index_${1}.csv
+    ofile="index_${1}.csv"
+    curl -z "$ofile" -R -O https://s3.amazonaws.com/irs-form-990/"${ofile}"
     remove_xml index_${1}.csv
 }
 
@@ -35,14 +36,8 @@ archive_indexes() {
 }
 
 archive_listings() {
-    dt=`date -r aws_2021.lst.gz "+%Y%m%d"`
-    dest="aws_listing_${dt}.zip"
-    set -e
-    if [ ! -s bk/$dest ]; then
-        zip $dest aws*gz
-        mv $dest bk
-        rm aws*gz
-    fi
+    :
+    # see data/s3_catalog.db for this info
 }
 
 get_irs_static_files() {
@@ -68,7 +63,8 @@ get_irs_eo() {
     pushd eo_extract/$nyr
 
     for src in eo_xx eo_pr eo1 eo2 eo3 eo4; do
-        curl -O https://www.irs.gov/pub/irs-soi/${src}.csv
+        pfile="${src}.csv"
+        curl -z "$pfile" -R -o "$pfile" https://www.irs.gov/pub/irs-soi/${pfile}
         remove_xml ${src}.csv
     done
 
@@ -92,7 +88,7 @@ get_irs_trust_info() {
     for yr in `get_years`; do
         src="SIT%20${yr}.csv"
         if [ ! -s "$src" ]; then
-            #curl -O https://www.irs.gov/pub/irs-soi/$src
+            #curl -R -O https://www.irs.gov/pub/irs-soi/$src
 	    :
 	fi
         remove_html "$src"
@@ -100,7 +96,7 @@ get_irs_trust_info() {
 
     for src in "2019-sit.csv" "2018_sit.csv" "SIT 2017.csv" "SIT 2016.csv" ; do
         if [ ! -s "$src" ]; then
-            curl -O https://www.irs.gov/pub/irs-soi/"$src"
+            curl -z "$src" -R -o "$src" https://www.irs.gov/pub/irs-soi/"$src"
 	fi
 	remove_html "$src"
     done
@@ -113,7 +109,7 @@ get_irs_zipstats() {
     for yr in `get_years`; do
         src="zipcode${yr}.zip" 
         if [ ! -s "$src" ]; then
-            curl -O https://www.irs.gov/pub/irs-soi/$src
+            curl -z "$src" -R -o "$src" https://www.irs.gov/pub/irs-soi/$src
 	    remove_html $src
 	fi
     done
@@ -153,36 +149,31 @@ get_migration() {
         nyr=$((baseyr + 1))
         src="${baseyr}${nyr}migrationdata.zip"
 	if [ ! -s "$src" ]; then
-            curl -O https://www.irs.gov/pub/irs-soi/${src}
+            curl -z "$src" -R -o "$src" https://www.irs.gov/pub/irs-soi/${src}
 	    remove_html "$src"
         fi
     done
 }
 
 list_prefix() {
-    aws s3 ls s3://irs-form-990/${1} --recursive | awk -e '/./ { print $4 };'
+    :
+    # see s3_indexer.py
 }
 
 get_aws_indexes() {
     pushd index
     archive_indexes | :
     
-    for sfx in `list_prefix index_`; do
-        aws s3 cp s3://irs-form-990/${sfx} ${sfx}
-    done
+    #for sfx in `list_prefix index_`; do
+    #    aws s3 cp s3://irs-form-990/${sfx} ${sfx}
+    #done
+
    popd
 }
 
 get_aws_yr_list() {
-    pushd listing
-    ayr="$1"
-    destFile="aws_${ayr}.lst.gz"
-    
-    if [ ! -s $destFile ]; then
-        echo "get s3 listing for $ayr"
-        aws s3 ls s3://irs-form-990/${ayr} --recursive |  gzip -c - > $destFile
-    fi
-    popd
+    :
+    # see data/s3_catalog.db for this data
 }
 
 get_years_listings() {
@@ -190,22 +181,7 @@ get_years_listings() {
     if [ -z "$force_reload" ]; then
         force_reload=0
     fi
-
-    pushd listing
-    archive_listings
-    popd
-
-    for i in `get_years`; do
-        get_aws_yr_list $i $force_reload &
-        
-        if [ `jobs -p | grep -c '.'` -gt 7 ]; then
-            wait -n
-        fi
-    done
-    
-    echo "waiting for aws index scans to complete"
-    ## wait for all jobs started above to end
-    wait
+    # see data/s3_catalog.db for aws lisitng data
     
     get_aws_indexes
 }
@@ -285,27 +261,21 @@ refresh_status() {
 }
 
 load_yr_from_aws_listing() {
-    yr="$1"
-    if [ ! -r tmp/p ]; then
-      mkfifo tmp/p
-    fi
-    zcat listing/aws_${yr}.lst.gz | awk 'BEGIN {print "date,time,size,path"; } /./ { print $1 "," $2 "," $3 "," $4; }' >> tmp/p &
     echo "
 PRAGMA SYNCHRONOUS=off;
-DROP TABLE IF EXISTS aws_listing_tmp;
-CREATE TABLE IF NOT EXISTS aws_listing_tmp (date TEXT, time TEXT, size INTEGER, path TEXT PRIMARY KEY);
+
+ATTACH DATABASE 'data/s3_catalog.db' as s3;
+
 CREATE TABLE IF NOT EXISTS aws_listing (date TEXT, time TEXT, size INTEGER, path TEXT PRIMARY KEY);
 CREATE UNIQUE INDEX IF NOT EXISTS aws_listing__path__ind on aws_listing(path);
 
-.headers off 
-.mode csv
-.import 'tmp/p' aws_listing_tmp
-INSERT INTO aws_listing (date, time, size, path)
-    SELECT date, time, size, path FROM aws_listing_tmp t
-      WHERE t.path > '' and
-          NOT EXISTS (SELECT 1 FROM aws_listing l WHERE l.path = t.path);
+INSERT INTO aws_listing_tmp (date, time, size, path)
+    SELECT date(object_date), time(object_date), size, key
+        FROM s3.s3_listing s
+        WHERE s.key > '' and
+           NOT EXISTS (SELECT 1 from aws_listing l WHERE l.path = s.key);
 
-DROP TABLE aws_listing_tmp;
+DETACH DATABASE s3;
 
     " | sqlite3 data/listing.db
 }
@@ -313,9 +283,8 @@ DROP TABLE aws_listing_tmp;
 load_from_aws_listings() {
     setup_filings | sqlite3 data/listing.db
 
-    for yr in `get_years`; do
-        load_yr_from_aws_listing $yr
-    done
+    load_yr_from_aws_listing
+
     (
     echo "
 PRAGMA SYNCHRONOUS=off;
@@ -453,7 +422,7 @@ SELECT 'mkdir -p tmpdata/${yr}/' || s.seg || ';'
 
 SELECT 'pushd tmpdata/${yr}';
 SELECT 'idx=0';
-SELECT 'if [ ! -s '|| s.seg || '/' || s.key|| ' ]; then idx=\$((idx + 1)); (cd ' || s.seg || '; curl -O ' || s.fullurl || ' &); fi'
+SELECT 'if [ ! -s '|| s.seg || '/' || s.key|| ' ]; then idx=\$((idx + 1)); (cd ' || s.seg || '; curl -R -O ' || s.fullurl || ' &); fi'
     FROM (SELECT 'https://s3.amazonaws.com/irs-form-990/' || key as fullurl, 
         xml_file, key, seg
       FROM ierr_tmp f
@@ -508,7 +477,7 @@ SELECT 'mkdir -p tmpdata/${yr}/' || s.seg || ';'
 
 SELECT 'pushd tmpdata/${yr}';
 SELECT 'idx=0';
-SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx + 1)); (cd ' || substr(s.url,5,2) || '; curl -O ' || s.fullurl || ' &); fi'
+SELECT 'if [ ! -s '|| substr(s.url,5,2) || '/' || s.url|| ' ]; then idx=\$((idx + 1)); (cd ' || substr(s.url,5,2) || '; curl -R -O ' || s.fullurl || ' &); fi'
     FROM (SELECT 'https://s3.amazonaws.com/irs-form-990/'||object_id as fullurl, 
         object_id as url
       FROM filings f
@@ -540,7 +509,9 @@ load_files() {
     # get a  list of what has been downloaded
     refresh_status "$list_yrs"
 
-    get_irs_static_files
+    if [ "$FORCERELOAD" == "1" ]; then
+        get_irs_static_files
+    fi
 
     for list_yr in $list_yrs; do
         echo "running for year ${list_yr}"
