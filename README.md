@@ -5,6 +5,7 @@
 
 
 ### monthly flow
+   python3 s3_indexer.py
    bash -x get_data.sh
    # which builds several content download scripts into tmp
 

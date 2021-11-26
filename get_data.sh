@@ -19,9 +19,14 @@ fi
 set +e
 
 get_irs_index() {
-    ofile="index_${1}.csv"
-    curl -z "$ofile" -R -O https://s3.amazonaws.com/irs-form-990/"${ofile}"
-    remove_xml index_${1}.csv
+    ofile="index_${1}.${2}"
+    if [ -s $ofile ]; then
+        # use newer than syntax
+        curl -z "$ofile" -R -o ${ofile} https://s3.amazonaws.com/irs-form-990/"${ofile}"
+    else
+        curl -R -o ${ofile} https://s3.amazonaws.com/irs-form-990/"${ofile}"
+    fi
+    #remove_xml index_${1}.${2}
 }
 
 archive_indexes() {
@@ -41,13 +46,16 @@ archive_listings() {
 }
 
 get_irs_static_files() {
-    return
+    #return
 
     pushd index
     
     for yr in `get_years`; do
         if [ ! -s index_${yr}.csv ]; then
-            get_irs_index $yr
+            get_irs_index $yr csv
+        fi
+        if [ ! -s index_${yr}.json ]; then
+            get_irs_index $yr json
         fi
     done
     popd
@@ -209,7 +217,8 @@ build_simple_object_listing() {
 
 build_object_lisitng() {
     yr=$1
-    # build inserts for local_index
+    # build inserts for local_index based on the superset of packaged and unpackaged listings
+
     pushd tmpdata;
     ( 
       find ${yr} -type f | awk -e '/./ {  a=split($0,p,"/"); print p[a] "," $0 "," '${yr}';}' 
@@ -261,6 +270,7 @@ refresh_status() {
 }
 
 load_yr_from_aws_listing() {
+    # merge the most recent S3 scan
     echo "
 PRAGMA SYNCHRONOUS=off;
 
@@ -269,15 +279,19 @@ ATTACH DATABASE 'data/s3_catalog.db' as s3;
 CREATE TABLE IF NOT EXISTS aws_listing (date TEXT, time TEXT, size INTEGER, path TEXT PRIMARY KEY);
 CREATE UNIQUE INDEX IF NOT EXISTS aws_listing__path__ind on aws_listing(path);
 
-INSERT INTO aws_listing_tmp (date, time, size, path)
+INSERT INTO aws_listing (date, time, size, path)
     SELECT date(object_date), time(object_date), size, key
         FROM s3.s3_listing s
         WHERE s.key > '' and
            NOT EXISTS (SELECT 1 from aws_listing l WHERE l.path = s.key);
 
+SELECT changes();
 DETACH DATABASE s3;
 
-    " | sqlite3 data/listing.db
+    " | sqlite3 data/listing.db > new_records.txt
+
+    cat new_records.txt
+
 }
 
 load_from_aws_listings() {
@@ -532,6 +546,8 @@ main()  {
     else
       list_yrs=`get_years`
     fi
+
+    python3 s3_indexer.py "--db" "listing/s3_catalog.db" "--bucket" "irs-form-990" "--prefixes" "default"
 
     export FORCERELOAD="1"
     #get static and dynamic listings of returns

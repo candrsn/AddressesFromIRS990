@@ -5,6 +5,7 @@ import sys
 import os
 import io
 import glob
+import time
 import xml.etree.ElementTree as ET
 import unicodecsv as csv
 import zipfile
@@ -15,7 +16,7 @@ import sqlite3
 
 # set TMPDIR to be here unless it already is defined
 if "TMPDIR" not in os.environ:
-    os.environ["TMPDIR"] = os.path.realpath(__name_)
+    os.environ["TMPDIR"] = os.path.realpath(__name__)
 
 TIMINGS = False
 
@@ -319,6 +320,7 @@ def main(args):
         scan_year(yr, dbname=dbname, sampleSize=sampleSize, refresh=refreshData)
         duration = time.time() - starttm
         logging.info(f"Records for {yr} imported in {duration}")
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     main(sys.argv)

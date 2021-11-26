@@ -1,3 +1,4 @@
+## scan an S3 bucket on multiple monotonic axes for new files
 
 import sys
 import os
@@ -189,6 +190,7 @@ def scan_s3_using_pool(db, bucket, prefixes):
 
     # grab some results
     while tasks > 0 or not done_queue.empty():
+        # wait for one of the threads to stop, collect its output and start it on the next portion
         itm = done_queue.get()
         tasks -= 1
 
@@ -220,6 +222,7 @@ def scan_s3_using_pool(db, bucket, prefixes):
     task_queue.close()
     done_queue.close()
 
+    # after shutting doen all of the workers, save any remaining data
     save_s3_listing_data(db, data)
 
 
@@ -227,6 +230,34 @@ def parse_args(args):
     pass
 
     return 
+
+def parse_args():
+    pass
+    ["--db", "listing/s3_catalog.db",
+                "--bucket", "irs-form-990",
+                "--prefixes", "default"]
+
+def irs_prefixes():
+    core_prefixes = [str(d) for d in range(2007, 2022)]
+    prefixes = []
+    for itm in core_prefixes:
+        # add a small scanning differentiator so more threads can be built in parallel
+        munged = [f"{itm}{d:-01}" for d in range(0, 10, 1)]
+        prefixes += munged
+    # add the special file types
+    prefixes += ["index", "list"]
+    
+    return prefixes
+
+def default_prefixes():
+    # see https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html
+    # for why this list
+    core_prefixes = [chr(d) for d in [range(97,122)]]
+    core_prefixes += [chr(d) for d in [range(65,90)]]
+    core_prefixes += [chr(d) for d in [range(48, 57)]]
+    core_prefixes += ['!', '-', '_', '.', '*', "'", '(', ')']
+
+    return core_prefixes
 
 def main(args=[]):
 
@@ -238,14 +269,9 @@ def main(args=[]):
         s3_bucket = "irs-form-990"
 
         db = sqlite3.connect(s3_catalog)
-        core_prefixes = [str(d) for d in range(2008, 2022)]
-        prefixes = []
-        for itm in core_prefixes:
-            # add a small scanning differentiator so more threads can be built in parallel
-            munged = [f"{itm}{d:-01}" for d in range(0, 10, 1)]
-            prefixes += munged
-        # add the special file types
-        prefixes += ["index", "list"]
+
+        prefixes = default_prefixes()
+        prefixes = ["2","index", "list"]
 
         # The unthreaded version
         #scan_s3(db, 'irs-form-990', prefixes=prefixes)
